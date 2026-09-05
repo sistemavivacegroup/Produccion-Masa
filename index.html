@@ -76,6 +76,14 @@
     padding:12px 20px;border-radius:24px;font-size:13px;font-weight:700;opacity:0;transition:opacity .25s;
     pointer-events:none;z-index:40;max-width:88%;text-align:center;line-height:1.4}
   #toast.on{opacity:1}
+  .plan-tot{font-size:13px;color:var(--tinta);margin-bottom:10px;line-height:1.5}
+  .plan-tot b{color:var(--papel);font-family:'Archivo',sans-serif;font-stretch:125%;font-weight:900;font-size:17px}
+  .cubre{font-size:11px;color:var(--tinta)}
+  .mono{font-family:'Space Mono',monospace;font-size:10.5px;color:var(--tinta);opacity:.75}
+  .ajuste{display:flex;gap:8px;align-items:center}
+  .ajuste button{flex:0 0 auto;width:60px;height:42px;background:var(--fondo);border:1px solid var(--linea);
+    color:var(--papel);border-radius:9px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer}
+  .ajuste input{flex:1;text-align:center}
 </style>
 </head>
 <body>
@@ -104,15 +112,25 @@
       </div>
       <div class="card">
         <h2>Balance a 5 días</h2>
-        <p class="nota" style="margin:0 0 10px">La demanda sale de lo que escribas abajo. Déjala en
-        blanco y el balance solo muestra lo disponible.</p>
+        <p class="nota" style="margin:0 0 10px">La demanda de cada día la calcula el sistema:
+        estacionalidad del mes, eventos de la semana y clima, repartido con la curva real
+        de ventas. No hay que teclear nada.</p>
         <table><thead><tr><th>Día</th><th class="n">Dispon.</th><th class="n">Demanda</th><th class="n">Saldo</th></tr></thead>
         <tbody id="t-balance"></tbody></table>
       </div>
       <div class="card">
-        <h2>Demanda prevista (panetti/día)</h2>
-        <div id="demanda-inputs"></div>
-        <button class="btn sec" id="b-recalcular">Recalcular balance</button>
+        <h2>Plan de amasado de la semana</h2>
+        <div id="plan"></div>
+        <div id="explica" class="nota"></div>
+        <label style="margin-top:14px">Ajuste manual sobre la demanda calculada</label>
+        <div class="ajuste">
+          <button data-a="-10">−10%</button>
+          <input type="number" id="a-pct" step="5" min="-50" max="50" value="0">
+          <button data-a="10">+10%</button>
+        </div>
+        <p class="nota">La demanda la calcula el sistema con la estacionalidad del mes,
+        los eventos de la semana y el clima. Toca esto solo si ves algo que el
+        calendario no recoge.</p>
       </div>
       <div class="card">
         <h2>Lotes de panetti vivos (FIFO)</h2>
@@ -146,13 +164,17 @@
         <h2>Registrar boleado</h2>
         <label>Lote de bulk</label>
         <select id="b-lote"><option value="">— cargando —</option></select>
+        <label>Kg boleados de ese bulk</label>
+        <input type="number" id="b-kg" inputmode="decimal" step="0.5" min="0" placeholder="deja vacío si has boleado todo lo que quedaba">
         <label>Panetti obtenidos</label>
         <input type="number" id="b-panetti" inputmode="numeric" step="1" min="0" placeholder="cuenta real">
         <label>Nota (opcional)</label>
         <textarea id="b-nota" placeholder="Gramaje, aspecto de la masa…"></textarea>
         <button class="btn" id="b-bolear">Registrar boleado</button>
-        <p class="nota">La cuenta real es lo que calibra el rendimiento por kg. Si se desvía más de
-        un 8 % del teórico, el sistema avisa.</p>
+        <p class="nota">Rara vez se bolea un bulk entero, y a veces se bolea uno completo más
+        parte de otro. Indica los kg que has boleado de verdad: el resto sigue en cámara y
+        aparecerá disponible para el próximo boleado. El rendimiento se calcula sobre lo
+        realmente boleado, así que solo sale bien si el dato es real.</p>
       </div>
       <div id="r-bolear"></div>
     </section>
@@ -183,8 +205,11 @@
 /* ⚠ CONFIGURAR: misma URL /exec del Apps Script del Director (Portal.gs enruta todo) */
 const API = 'https://script.google.com/macros/s/AKfycbxR12l4LsPLVBLGYIp70JNP4rX9q2UyFKaEpzoVuLTGHwByYNgbauk051r6BAFKOsN7Wg/exec';
 
-let DEMANDA = {};
-try { DEMANDA = JSON.parse(localStorage.getItem('vg_masa_demanda') || '{}'); } catch(e){ DEMANDA = {}; }
+/* La demanda ya no se teclea: la calcula el backend con estacionalidad, eventos
+   y clima. Aquí solo vive el ajuste manual, por si el calendario no recoge algo. */
+let AJUSTE = 0;
+try { AJUSTE = parseInt(localStorage.getItem('vg_masa_ajuste') || '0', 10) || 0; } catch(e){ AJUSTE = 0; }
+let PLAN = null;
 
 function tok(){ return (window.VIVACE_USER||{}).token || ''; }
 
@@ -243,8 +268,13 @@ document.querySelectorAll('nav button').forEach(b => {
 /* ── BALANCE ── */
 async function cargarBalance(){
   try{
-    const r = await llamar({ action:'masa_balance', demanda: JSON.stringify(DEMANDA) });
-    if(!r) return;
+    const [r, pl] = await Promise.all([
+      llamar({ action:'masa_balance', ajustePct: AJUSTE }),
+      llamar({ action:'masa_plan', ajustePct: AJUSTE })
+    ]);
+    if(!r || !pl) return;
+    PLAN = pl;
+    pintarPlan(pl);
     document.getElementById('hreloj').textContent = corto(r.ahora);
 
     const hoy = r.balance[0] || {};
@@ -269,10 +299,6 @@ async function cargarBalance(){
       '<td class="n" style="color:' + (b.saldo < 0 ? 'var(--sube)' : 'var(--ok)') + '">' +
       (b.saldo > 0 ? '+' : '') + b.saldo + '</td></tr>').join('');
 
-    document.getElementById('demanda-inputs').innerHTML = r.balance.map(b =>
-      '<label style="margin-top:8px">' + diaCorto(b.fecha) + '</label>' +
-      '<input type="number" inputmode="numeric" min="0" step="1" data-f="' + b.fecha +
-      '" value="' + (DEMANDA[b.fecha] || '') + '" placeholder="0">').join('');
 
     const inv = r.inventario || [];
     document.getElementById('t-inv').innerHTML = inv.length ? inv.map(l => {
@@ -290,21 +316,47 @@ async function cargarBalance(){
     const bp = r.bulkPendiente || [];
     sel.innerHTML = bp.length
       ? bp.map(b => '<option value="' + b.lote + '">' + b.lote + ' · ' + b.kg +
-          ' kg · ~' + b.previstos + ' panetti</option>').join('')
+          ' kg' + (b.parcial ? ' restantes de ' + b.kgTotal : '') +
+          ' · ~' + b.previstos + ' panetti</option>').join('')
       : '<option value="">— no hay bulk sin bolear —</option>';
     document.getElementById('b-bolear').disabled = !bp.length;
 
   }catch(e){ toast('No se pudo cargar el balance: ' + e.message); }
 }
 
-document.getElementById('b-recalcular').onclick = () => {
-  document.querySelectorAll('#demanda-inputs input').forEach(i => {
-    const v = parseInt(i.value, 10);
-    if(v > 0) DEMANDA[i.dataset.f] = v; else delete DEMANDA[i.dataset.f];
-  });
-  try{ localStorage.setItem('vg_masa_demanda', JSON.stringify(DEMANDA)); }catch(e){}
+function pintarPlan(pl){
+  const d = pl.demanda || {};
+  document.getElementById('plan').innerHTML =
+    '<div class="plan-tot"><b>' + d.semana + '</b> panetti previstos esta semana · <b>' +
+      pl.kgSemana + ' kg</b> de harina</div>' +
+    '<table><thead><tr><th>Amasar</th><th class="n">kg</th><th class="n">panetti</th><th>cubre</th></tr></thead><tbody>' +
+    (pl.plan||[]).map(p =>
+      '<tr><td><b>' + p.dia + '</b></td><td class="n">' + p.kgHarina + '</td>' +
+      '<td class="n">' + p.panetti + '</td><td class="cubre">' +
+      (p.cubre||[]).map(f => diaCorto(f).split(' ')[0]).join(' · ') + '</td></tr>').join('') +
+    '</tbody></table>' +
+    (pl.aviso ? '<div class="aviso mal" style="margin-top:10px">' + esc(pl.aviso) + '</div>' : '');
+
+  const f = d.factores || {};
+  document.getElementById('explica').innerHTML =
+    esc(d.explicacion || '') +
+    '<br><span class="mono">base ' + f.base + ' × estacional ' + f.estacional +
+    ' × eventos ' + f.eventos + ' × clima ' + f.clima +
+    (f.manual !== 1 ? ' × manual ' + f.manual : '') + '</span>';
+  document.getElementById('a-pct').value = AJUSTE;
+}
+
+function esc(t){ return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function aplicarAjuste(v){
+  AJUSTE = Math.max(-50, Math.min(50, v));
+  try{ localStorage.setItem('vg_masa_ajuste', String(AJUSTE)); }catch(e){}
   cargarBalance();
-};
+}
+document.querySelectorAll('.ajuste button').forEach(b => {
+  b.onclick = () => aplicarAjuste(AJUSTE + parseInt(b.dataset.a, 10));
+});
+document.getElementById('a-pct').onchange = function(){ aplicarAjuste(parseInt(this.value,10)||0); };
 
 /* ── AMASAR ── */
 document.getElementById('b-amasar').onclick = async function(){
@@ -340,16 +392,20 @@ document.getElementById('b-bolear').onclick = async function(){
   this.disabled = true;
   try{
     const r = await llamar({ action:'masa_bolear', loteBulk: lote, panetti: n,
+      kgBoleados: document.getElementById('b-kg').value || '',
       nota: document.getElementById('b-nota').value });
     if(!r) return;
     const malo = Math.abs(r.desvioPct) >= 8;
     document.getElementById('r-bolear').innerHTML =
-      '<div class="aviso ' + (malo ? '' : 'bien') + '"><b>' + r.lote + ' · ' + r.panetti + ' panetti</b><br>' +
+      '<div class="aviso ' + (malo ? '' : 'bien') + '"><b>' + r.lote + ' · ' + r.panetti +
+      ' panetti de ' + r.kgBoleados + ' kg</b><br>' +
+      (r.bulkAgotado ? 'Bulk agotado. ' : 'Quedan ' + r.kgRestantesBulk + ' kg de ese bulk. ') +
       'Rendimiento real ' + r.rendimiento + '/kg frente a ' + r.rendimientoTeorico + ' de ficha (' +
       (r.desvioPct > 0 ? '+' : '') + r.desvioPct + ' %).<br>' +
       'Listos desde el <b>' + corto(r.listoDesde) + '</b>, caducan el <b>' + corto(r.caduca) + '</b>.' +
       (r.aviso ? '<br><br>' + r.aviso : '') + '</div>';
     document.getElementById('b-panetti').value = '';
+    document.getElementById('b-kg').value = '';
     document.getElementById('b-nota').value = '';
     toast('Boleado registrado: ' + r.lote);
     cargarBalance();
