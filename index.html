@@ -164,17 +164,15 @@
         <h2>Registrar boleado</h2>
         <label>Lote de bulk</label>
         <select id="b-lote"><option value="">— cargando —</option></select>
-        <label>Kg boleados de ese bulk</label>
-        <input type="number" id="b-kg" inputmode="decimal" step="0.5" min="0" placeholder="deja vacío si has boleado todo lo que quedaba">
         <label>Panetti obtenidos</label>
         <input type="number" id="b-panetti" inputmode="numeric" step="1" min="0" placeholder="cuenta real">
         <label>Nota (opcional)</label>
         <textarea id="b-nota" placeholder="Gramaje, aspecto de la masa…"></textarea>
         <button class="btn" id="b-bolear">Registrar boleado</button>
-        <p class="nota">Rara vez se bolea un bulk entero, y a veces se bolea uno completo más
-        parte de otro. Indica los kg que has boleado de verdad: el resto sigue en cámara y
-        aparecerá disponible para el próximo boleado. El rendimiento se calcula sobre lo
-        realmente boleado, así que solo sale bien si el dato es real.</p>
+        <p class="nota">Elige el bulk y cuenta los panetti que han salido. Los kg que se
+        descuentan del bulk se calculan solos a partir del rendimiento de la ficha, no hace
+        falta pesar nada. Si te sobra una pequeña cantidad de masa, el bulk se da por terminado
+        solo; si queda bastante, sigue disponible para el próximo boleado.</p>
       </div>
       <div id="r-bolear"></div>
     </section>
@@ -392,20 +390,15 @@ document.getElementById('b-bolear').onclick = async function(){
   this.disabled = true;
   try{
     const r = await llamar({ action:'masa_bolear', loteBulk: lote, panetti: n,
-      kgBoleados: document.getElementById('b-kg').value || '',
       nota: document.getElementById('b-nota').value });
     if(!r) return;
-    const malo = Math.abs(r.desvioPct) >= 8;
+    const malo = !!r.aviso && Math.abs(r.desvioPct || 0) >= 8;
     document.getElementById('r-bolear').innerHTML =
-      '<div class="aviso ' + (malo ? '' : 'bien') + '"><b>' + r.lote + ' · ' + r.panetti +
-      ' panetti de ' + r.kgBoleados + ' kg</b><br>' +
-      (r.bulkAgotado ? 'Bulk agotado. ' : 'Quedan ' + r.kgRestantesBulk + ' kg de ese bulk. ') +
-      'Rendimiento real ' + r.rendimiento + '/kg frente a ' + r.rendimientoTeorico + ' de ficha (' +
-      (r.desvioPct > 0 ? '+' : '') + r.desvioPct + ' %).<br>' +
+      '<div class="aviso ' + (malo ? '' : 'bien') + '"><b>' + r.lote + ' · ' + r.panetti + ' panetti</b><br>' +
+      (r.bulkAgotado ? 'Bulk terminado. ' : 'Quedan ' + r.kgRestantesBulk + ' kg de harina de ese bulk sin bolear. ') + '<br>' +
       'Listos desde el <b>' + corto(r.listoDesde) + '</b>, caducan el <b>' + corto(r.caduca) + '</b>.' +
       (r.aviso ? '<br><br>' + r.aviso : '') + '</div>';
     document.getElementById('b-panetti').value = '';
-    document.getElementById('b-kg').value = '';
     document.getElementById('b-nota').value = '';
     toast('Boleado registrado: ' + r.lote);
     cargarBalance();
