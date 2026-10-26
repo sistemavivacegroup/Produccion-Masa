@@ -284,11 +284,17 @@ async function cargarBalance(){
                         .reduce((s,l) => s + l.disponibles, 0) || 0;
 
     const rc = r.recomendacion || {};
+    /* El amasado es flexible: si aún hay margen, se dice hasta cuándo se puede
+       esperar y se deja elegir el día con menos carga. */
     document.getElementById('reco').innerHTML = rc.amasarHoy
-      ? '<div class="aviso ' + (rc.aTiempo ? '' : 'mal') + '"><b>Toca amasar: ' + rc.kgHarina +
-        ' kg de harina</b> (' + rc.panetti + ' panetti).<br>' + rc.motivo +
-        (rc.aviso ? '<br><br>' + rc.aviso : '') + '</div>'
-      : '<div class="aviso bien"><b>No hace falta amasar.</b><br>' + (rc.motivo||'') + '</div>';
+      ? '<div class="aviso ' + (rc.aTiempo ? '' : 'mal') + '"><b>Toca amasar: ' + esc(rc.kgHarina) +
+        ' kg de harina</b> (' + esc(rc.panetti) + ' panetti).<br>' + esc(rc.motivo) +
+        (rc.aviso ? '<br><br>' + esc(rc.aviso) : '') + '</div>'
+      : rc.puedeEsperar
+      ? '<div class="aviso"><b>Hará falta amasar: ' + esc(rc.kgHarina) +
+        ' kg de harina</b> (' + esc(rc.panetti) + ' panetti). <b>Hoy no es obligatorio.</b><br>' +
+        esc(rc.motivo) + '</div>'
+      : '<div class="aviso bien"><b>No hace falta amasar.</b><br>' + esc(rc.motivo||'') + '</div>';
 
     document.getElementById('t-balance').innerHTML = r.balance.map(b =>
       '<tr><td>' + b.diaSemana.slice(0,3) + ' ' + b.fecha.slice(8) + '</td>' +
@@ -327,12 +333,21 @@ function pintarPlan(pl){
   document.getElementById('plan').innerHTML =
     '<div class="plan-tot"><b>' + d.semana + '</b> panetti previstos esta semana · <b>' +
       pl.kgSemana + ' kg</b> de harina</div>' +
-    '<table><thead><tr><th>Amasar</th><th class="n">kg</th><th class="n">panetti</th><th>cubre</th></tr></thead><tbody>' +
-    (pl.plan||[]).map(p =>
-      '<tr><td><b>' + p.dia + '</b></td><td class="n">' + p.kgHarina + '</td>' +
-      '<td class="n">' + p.panetti + '</td><td class="cubre">' +
-      (p.cubre||[]).map(f => diaCorto(f).split(' ')[0]).join(' · ') + '</td></tr>').join('') +
+    '<table><thead><tr><th style="width:62px;white-space:nowrap">Para el</th><th class="n" style="width:60px">panetti</th><th class="n" style="width:42px">kg</th><th>Amasar entre</th></tr></thead><tbody>' +
+    (pl.plan||[]).map(p => {
+      let franja;
+      if(p.estado === 'cerrado') franja = 'cerrado';
+      else if(p.estado === 'pasado') franja = 'plazo pasado';
+      else if(p.estado === 'ultimo') franja = '<b style="color:var(--aviso)">hoy es el último día</b>';
+      else franja = '<span style="white-space:nowrap">' + esc(diaCorto(p.amasarDesde)) + ' – ' + esc(diaCorto(p.amasarHasta)) + '</span>';
+      return '<tr><td style="white-space:nowrap"><b>' + esc(diaCorto(p.fecha)) + '</b></td>' +
+        '<td class="n">' + (p.cerrado ? '·' : esc(p.panetti)) + '</td>' +
+        '<td class="n">' + (p.cerrado ? '·' : esc(p.kgHarina)) + '</td>' +
+        '<td class="cubre">' + franja + '</td></tr>';
+    }).join('') +
     '</tbody></table>' +
+    '<div class="nota">El amasado es flexible: amasa el día que mejor encaje con la carga, ' +
+    'dentro de cada franja. Si juntas varios días en una tanda, suma sus kg.</div>' +
     (pl.aviso ? '<div class="aviso mal" style="margin-top:10px">' + esc(pl.aviso) + '</div>' : '');
 
   const f = d.factores || {};
